@@ -1,11 +1,19 @@
 package teamcity
 
 import (
+	"errors"
 	"fmt"
 	"log"
 
 	api "github.com/cvbarros/go-teamcity/teamcity"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/helper/validation"
+)
+
+const (
+	resourceProjectRootID          = "_Root"
+	resourceProjectRootName        = "<Root project>"
+	resourceProjectRootDescription = "Contains all other projects"
 )
 
 func resourceProject() *schema.Resource {
@@ -19,13 +27,22 @@ func resourceProject() *schema.Resource {
 		},
 
 		Schema: map[string]*schema.Schema{
+			"root": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  false,
+			},
 			"name": {
-				Type:     schema.TypeString,
-				Required: true,
+				Type:         schema.TypeString,
+				Optional:     true,
+				Computed:     true,
+				ForceNew:     true,
+				ValidateFunc: validation.StringIsNotEmpty,
 			},
 			"description": {
 				Type:     schema.TypeString,
 				Optional: true,
+				Computed: true,
 			},
 			"parent_id": {
 				Type:     schema.TypeString,
@@ -44,12 +61,34 @@ func resourceProject() *schema.Resource {
 				Optional: true,
 			},
 		},
+		CustomizeDiff: func(diff *schema.ResourceDiff, i interface{}) error {
+			root := diff.Get("root").(bool)
+			if root {
+				if v, ok := diff.GetOk("name"); ok && v.(string) != resourceProjectRootName {
+					return errors.New("'name' cannot be defined for the root project")
+				}
+				if v, ok := diff.GetOk("description"); ok && v.(string) != resourceProjectRootDescription {
+					return errors.New("'description' cannot be defined for the root project")
+				}
+			}
+			// Validate required name if root = false
+			if _, ok := diff.GetOk("name"); !ok && !root {
+				return errors.New("'name' is required for non-root project")
+			}
+
+			return nil
+		},
 	}
 }
 
 func resourceProjectCreate(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*api.Client)
 	var name, parentID string
+
+	if isRoot, ok := d.GetOk("root"); ok && isRoot.(bool) {
+		// Skip creation altogether
+		return resourceProjectUpdate(d, client)
+	}
 
 	if v, ok := d.GetOk("name"); ok {
 		name = v.(string)
@@ -71,13 +110,17 @@ func resourceProjectCreate(d *schema.ResourceData, meta interface{}) error {
 		return err
 	}
 
-	d.MarkNewResource()
 	d.SetId(created.ID)
 
 	return resourceProjectUpdate(d, client)
 }
 
 func resourceProjectUpdate(d *schema.ResourceData, meta interface{}) error {
+	if isRoot, ok := d.GetOk("root"); ok && isRoot.(bool) {
+		// Skip creation altogether
+		d.SetId(resourceProjectRootID)
+	}
+
 	client := meta.(*api.Client)
 	dt, err := client.Projects.GetByID(d.Id())
 	if err != nil {
@@ -93,11 +136,11 @@ func resourceProjectUpdate(d *schema.ResourceData, meta interface{}) error {
 	}
 
 	if d.HasChange("parent_id") {
-		parentId := d.Get("parent_id").(string)
-		if parentId == "" {
-			parentId = "_Root"
+		parentID := d.Get("parent_id").(string)
+		if parentID == "" {
+			parentID = resourceProjectRootID
 		}
-		dt.SetParentProject(parentId)
+		dt.SetParentProject(parentID)
 	}
 
 	dt.Parameters, err = expandParameterCollection(d)
@@ -119,28 +162,42 @@ func resourceProjectRead(d *schema.ResourceData, meta interface{}) error {
 	if err != nil {
 		return err
 	}
+
+	root := d.Id() == resourceProjectRootID
+	if err := d.Set("root", root); err != nil {
+		return err
+	}
 	if err := d.Set("name", dt.Name); err != nil {
 		return err
 	}
 	if err := d.Set("description", dt.Description); err != nil {
 		return err
 	}
-	if err := d.Set("parent_id", dt.ParentProject.ID); err != nil {
-		return err
+	if dt.ParentProject != nil {
+		if err := d.Set("parent_id", dt.ParentProject.ID); err != nil {
+			return err
+		}
+	} else {
+		d.Set("parent_id", "")
 	}
 
 	d.Set("name", dt.Name)
 	d.Set("description", dt.Description)
-	parentProjectId := dt.ParentProjectID
-	if parentProjectId == "_Root" {
-		parentProjectId = ""
+	parentProjectID := dt.ParentProjectID
+	if parentProjectID == "_Root" {
+		parentProjectID = ""
 	}
-	d.Set("parent_id", parentProjectId)
+	d.Set("parent_id", parentProjectID)
 
 	return flattenParameterCollection(d, dt.Parameters)
 }
 
 func resourceProjectDelete(d *schema.ResourceData, meta interface{}) error {
+	if root, ok := d.GetOk("root"); ok && root.(bool) {
+		//Skip destruction of _Root project
+		d.SetId("")
+		return nil
+	}
 	client := meta.(*api.Client)
 	log.Print(fmt.Sprintf("[DEBUG]: resourceProjectDelete - Destroying project %v", d.Id()))
 	err := client.Projects.Delete(d.Id())
