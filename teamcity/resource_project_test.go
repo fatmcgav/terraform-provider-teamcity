@@ -117,7 +117,7 @@ func TestAccTeamcityProject_Update(t *testing.T) {
 				Config: testAccTeamcityProjectFullUpdated,
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckTeamcityProjectExists(resName, &p),
-					resource.TestCheckResourceAttr(resName, "description", "updated project"),
+					resource.TestCheckResourceAttr(resName, "name", "updated project"),
 					resource.TestCheckResourceAttr(resName, "description", "Test Project Updated"),
 					resource.TestCheckResourceAttr(resName, "config_params.param1", "config_value1"),
 					resource.TestCheckResourceAttr(resName, "config_params.param2", "config_value2"),
