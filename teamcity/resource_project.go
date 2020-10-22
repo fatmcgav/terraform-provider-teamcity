@@ -185,7 +185,7 @@ func resourceProjectRead(d *schema.ResourceData, meta interface{}) error {
 	d.Set("description", dt.Description)
 	parentProjectID := dt.ParentProjectID
 	if parentProjectID == "_Root" {
-		parentProjectID = ""
+		parentProjectID = resourceProjectRootID
 	}
 	d.Set("parent_id", parentProjectID)
 
