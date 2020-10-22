@@ -7,6 +7,7 @@
 *.so
 *.dylib
 dist/
+bin/
 
 # Test binary, build with `go test -c`
 *.test
@@ -32,3 +33,4 @@ data_dir/
 
 #Local Testing environment
 .test.env
+
